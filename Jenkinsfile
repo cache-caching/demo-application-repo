@@ -5,8 +5,6 @@ pipeline {
         AWS_REGION = 'ap-northeast-2'
         ECR_REPO = 'demo-ecr'
 
-        GITHUB_USER = 'cache-caching'
-        GITHUB_ACCESS_TOKEN = credentials('github-access-token')
         GITHUB_MANIFEST_REPOSITORY_NAME = 'demo-manifest-repo'
         
         MANIFEST_FILE = 'deployment.yaml'
@@ -93,7 +91,7 @@ pipeline {
                 withCredentials([string(credentialsId: "${GITHUB_ACCESS_TOKEN}", variable: 'GITHUB_TOKEN')]) {
                     sh """
                     rm -rf ${GITHUB_MANIFEST_REPOSITORY_NAME}
-                    git clone https://${GITHUB_USER}:${GITHUB_TOKEN}@github.com/${GITHUB_USER}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
+                    git clone https://${GITHUB_USR}:${GITHUB_PSW}@github.com/${GITHUB_USR}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
                     
                     sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ./${GITHUB_MANIFEST_REPOSITORY_NAME}/${MANIFEST_FILE}
 
