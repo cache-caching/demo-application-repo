@@ -6,7 +6,6 @@ pipeline {
         ECR_REPO = 'demo-ecr'
 
         GITHUB_MANIFEST_REPOSITORY_NAME = 'demo-manifest-repo'
-        
         MANIFEST_FILE = 'deployment.yaml'
     }
 
@@ -88,20 +87,29 @@ pipeline {
 
         stage('Update GitOps Manifest') {
             steps {
-                withCredentials([string(credentialsId: "${GITHUB_ACCESS_TOKEN}", variable: 'GITHUB_TOKEN')]) {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'github',
+                        usernameVariable: 'GITHUB_USR',
+                        passwordVariable: 'GITHUB_PSW'
+                    )
+                ]) {
                     sh """
                     rm -rf ${GITHUB_MANIFEST_REPOSITORY_NAME}
+
                     git clone https://${GITHUB_USR}:${GITHUB_PSW}@github.com/${GITHUB_USR}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
-                    
-                    sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ./${GITHUB_MANIFEST_REPOSITORY_NAME}/${MANIFEST_FILE}
+
+                    cd ${GITHUB_MANIFEST_REPOSITORY_NAME}
+
+                    sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ${MANIFEST_FILE}
 
                     git config user.email "skills@localhost"
                     git config user.name "skills"
-                    
+
                     if git status | grep -q "${MANIFEST_FILE}"; then
-                        git -C ./${GITHUB_MANIFEST_REPOSITORY_NAME} add ${MANIFEST_FILE}
-                        git -C ./${GITHUB_MANIFEST_REPOSITORY_NAME} commit -m "Update image to ${IMAGE_TAG}"
-                        git -C ./${GITHUB_MANIFEST_REPOSITORY_NAME} push origin main
+                        git add ${MANIFEST_FILE}
+                        git commit -m "Update image to ${IMAGE_TAG}"
+                        git push origin main
                     else
                         echo "No changes to commit"
                     fi
