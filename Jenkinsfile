@@ -22,7 +22,6 @@ pipeline {
                 script {
                     def accountId = sh(
                         script: "aws sts get-caller-identity --query Account --output text",
-                        returnStatus: false,
                         returnStdout: true
                     ).trim()
                     
@@ -46,21 +45,24 @@ pipeline {
                     } else {
                         def existingTags = stdout.split(/\s+/)
                         def semverPattern = /^v\d+\.\d+\.\d+$/
-                        def versions = existingTags.findAll { it =~ semverPattern }
+                        def versions = existingTags.findAll { it ==~ semverPattern }
 
                         if (versions) {
-                            def latest = versions.sort { a, b ->
-                                def aParts = a.replaceAll('v','').split('\\.').collect { it.toInteger() }
-                                def bParts = b.replaceAll('v','').split('\\.').collect { it.toInteger() }
-                                for (int i = 0; i < 3; i++) {
-                                    if (aParts[i] != bParts[i]) return aParts[i] <=> bParts[i]
+                            // CPS-safe 최대 버전 계산
+                            def maxVersion = [0,0,0]
+                            versions.each { ver ->
+                                def parts = ver.replaceAll('v','').split('\\.').collect { it.toInteger() }
+                                for (int i=0; i<3; i++) {
+                                    if (parts[i] > maxVersion[i]) {
+                                        maxVersion = parts
+                                        break
+                                    } else if (parts[i] < maxVersion[i]) {
+                                        break
+                                    }
                                 }
-                                return 0
-                            }.last()
-
-                            def lastParts = latest.replaceAll('v','').split('\\.').collect { it.toInteger() }
-                            lastParts[2] += 1
-                            env.IMAGE_TAG = "v${lastParts.join('.')}"
+                            }
+                            maxVersion[2] += 1
+                            env.IMAGE_TAG = "v${maxVersion.join('.')}"
                         } else {
                             env.IMAGE_TAG = 'v1.0.0'
                         }
@@ -94,26 +96,27 @@ pipeline {
                         passwordVariable: 'GITHUB_PSW'
                     )
                 ]) {
-                    sh """
-                    rm -rf ${GITHUB_MANIFEST_REPOSITORY_NAME}
+                    script {
+                        sh """
+                        rm -rf ${GITHUB_MANIFEST_REPOSITORY_NAME}
+                        git clone https://${GITHUB_USR}:${GITHUB_PSW}@github.com/${GITHUB_USR}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
+                        """
 
-                    git clone https://${GITHUB_USR}:${GITHUB_PSW}@github.com/${GITHUB_USR}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
-
-                    cd ${GITHUB_MANIFEST_REPOSITORY_NAME}
-
-                    sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ${MANIFEST_FILE}
-
-                    git config user.email "skills@localhost"
-                    git config user.name "skills"
-
-                    if git status | grep -q "${MANIFEST_FILE}"; then
-                        git add ${MANIFEST_FILE}
-                        git commit -m "Update image to ${IMAGE_TAG}"
-                        git push origin main
-                    else
-                        echo "No changes to commit"
-                    fi
-                    """
+                        dir("${GITHUB_MANIFEST_REPOSITORY_NAME}") {
+                            sh """
+                            sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ${MANIFEST_FILE}
+                            git config user.email "skills@localhost"
+                            git config user.name "skills"
+                            if git status | grep -q "${MANIFEST_FILE}"; then
+                                git add ${MANIFEST_FILE}
+                                git commit -m "Update image to ${IMAGE_TAG}"
+                                git push origin main
+                            else
+                                echo "No changes to commit"
+                            fi
+                            """
+                        }
+                    }
                 }
             }
         }
