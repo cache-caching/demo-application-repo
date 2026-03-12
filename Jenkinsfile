@@ -2,17 +2,19 @@ pipeline {
     agent any
 
     environment {
-        AWS_REGION = 'ap-northeast-2'
-        ECR_REPO = 'demo-ecr'
+        AWS_REGION      = 'ap-northeast-2'
+        ECR_REPO        = 'demo-ecr'
 
-        GITHUB_MANIFEST_REPOSITORY_NAME = 'demo-manifest-repo'
-        MANIFEST_FILE = 'deployment.yaml'
+        GITHUB_CRED_ID  = 'github'
+        MANIFEST_REPO   = 'demo-manifest-repo'
+        MAIN_BRANCH     = 'main'
+
+        MANIFEST_FILE   = 'deployment.yaml'
     }
 
     stages {
         stage('Checkout') {
             steps {
-                echo "Git Checkout"
                 checkout scm
             }
         }
@@ -48,7 +50,6 @@ pipeline {
                         def versions = existingTags.findAll { it ==~ semverPattern }
 
                         if (versions) {
-                            // CPS-safe 최대 버전 계산
                             def maxVersion = [0,0,0]
                             versions.each { ver ->
                                 def parts = ver.replaceAll('v','').split('\\.').collect { it.toInteger() }
@@ -77,7 +78,6 @@ pipeline {
         stage('Docker Build & Push') {
             steps {
                 script {
-                    echo "Building and Pushing Docker Image: ${env.DOCKER_IMAGE}"
                     sh """
                     aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
                     docker build -t ${DOCKER_IMAGE} .
@@ -89,33 +89,28 @@ pipeline {
 
         stage('Update GitOps Manifest') {
             steps {
-                withCredentials([
-                    usernamePassword(
-                        credentialsId: 'github',
-                        usernameVariable: 'GITHUB_USR',
-                        passwordVariable: 'GITHUB_PSW'
-                    )
-                ]) {
-                    script {
+                script {
+                    withCredentials([usernamePassword(credentialsId: env.GITHUB_CRED_ID, usernameVariable: 'G_USER', passwordVariable: 'G_TOKEN')]) {
                         sh """
-                        rm -rf ${GITHUB_MANIFEST_REPOSITORY_NAME}
-                        git clone https://${GITHUB_USR}:${GITHUB_PSW}@github.com/${GITHUB_USR}/${GITHUB_MANIFEST_REPOSITORY_NAME}.git
-                        """
+                        rm -rf ${MANIFEST_REPO}
+                        git clone https://${G_USER}:${G_TOKEN}@github.com/${G_USER}/${MANIFEST_REPO}.git
+                        
+                        cd ${MANIFEST_REPO}
+                        
+                        sed -i "s|image:.*|image: ${DOCKER_IMAGE}|g" ${MANIFEST_FILE}
+                        
+                        git config user.email "jenkins@localhost"
+                        git config user.name "jenkins"
+                        
+                        git add ${MANIFEST_FILE}
 
-                        dir("${GITHUB_MANIFEST_REPOSITORY_NAME}") {
-                            sh """
-                            sed -i "s|image: .*|image: ${DOCKER_IMAGE}|" ${MANIFEST_FILE}
-                            git config user.email "skills@localhost"
-                            git config user.name "skills"
-                            if git status | grep -q "${MANIFEST_FILE}"; then
-                                git add ${MANIFEST_FILE}
-                                git commit -m "Update image to ${IMAGE_TAG}"
-                                git push origin main
-                            else
-                                echo "No changes to commit"
-                            fi
-                            """
-                        }
+                        if ! git diff-index --quiet HEAD; then
+                            git commit -m "chore: update image to ${IMAGE_TAG} [skip ci]"
+                            git push origin ${MAIN_BRANCH}
+                        else
+                            echo "No changes detected in manifest."
+                        fi
+                        """
                     }
                 }
             }
@@ -124,12 +119,10 @@ pipeline {
 
     post {
         success {
-            echo "Build, Push, and Deploy completed: ${env.DOCKER_IMAGE}"
-        }
-        failure {
-            echo "Pipeline failed! Check the logs above."
+            echo "Successfully deployed ${env.DOCKER_IMAGE}"
         }
         always {
+            sh "docker rmi ${env.DOCKER_IMAGE} || true"
             cleanWs()
         }
     }
